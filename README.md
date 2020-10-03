@@ -1,0 +1,2 @@
+# coupledpypole
+Coupled dipole method

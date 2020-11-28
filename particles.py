@@ -18,16 +18,10 @@ class Metal:
                                 (freq * freq + 1j * loss * freq))
 
 class Particle:    
-    def __init__(self, properties: dict = None):
-        if properties is None:
-            properties = {'radius': 10E-9, 
-                    'height': 10E-9, 
-                    'material': Metal()
-                    }
-
-        self.radius = properties['radius']
-        self.height = properties['height']
-        self.material = properties['material'] 
+    def __init__(self, radius = 10E-9, height = 10E-9, material = Metal()):
+        self.radius = radius
+        self.height = height
+        self.material = material
 
         self.omega_p = self.material.omega_p
         self.loss = self.material.loss

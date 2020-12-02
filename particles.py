@@ -8,16 +8,28 @@ EV = sp.constants.e / sp.constants.h
 
 @dataclass
 class Metal:
+    '''
+    Permittivity for Drude metals.
+
+    '''
     omega_p: float = 8.9 * EV
     loss: float = 0.038 * EV
     eps_inf: float = 5
     eps_m: float = 1
 
-    def permittivity(freq) -> float:
-        return eps_inf - ((omega_p * omega_p) / 
-                                (freq * freq + 1j * loss * freq))
+    def permittivity(self, freq) -> float:
+        return self.eps_inf - ((self.omega_p * self.omega_p) / 
+                                (freq * freq + 1j * self.loss * freq))
 
 class Particle:    
+    '''
+    Analytical expressions for the polarisability of small metallic spheroids.
+
+    Adapted from Alexander Moroz, "Depolarization field of spheroidal particles," 
+                                    J. Opt. Soc. Am. B 26, 517-527 (2009) 
+
+    '''
+
     def __init__(self, radius = 10E-9, height = 10E-9, material = Metal()):
         self.radius = radius
         self.height = height
@@ -56,7 +68,7 @@ class Particle:
             self.omega_lsp = self.omega_p/np.sqrt(self.eps_inf - 1 + 1/self.L_xy),\
                                 self.omega_p/np.sqrt(self.eps_inf - 1 + 1/self.L_z)
 
-        elif r == h0:
+        else:
             self.L_z, self.L_xy = 1/3, 1/3
             self.D_z, self.D_xy = 1, 1
             self.omega_lsp = self.omega_p / np.sqrt(self.eps_inf + 2),\

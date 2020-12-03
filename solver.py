@@ -4,19 +4,12 @@ import numpy as np
 import scipy as sp
 from numpy import sqrt, pi, exp
 from scipy.special import erfc
-from scipy import linalg
-from scipy import constants
-from scipy import integrate
-from scipy import optimize
+from scipy import linalg, constants, integrate, optimize
 
 import itertools as it
-from matplotlib import pyplot as plt
 from multiprocessing import Pool
 
-import sys
 import time
-
-import lattices, particles
 
 EV = sp.constants.e/sp.constants.h
 
@@ -42,25 +35,32 @@ class Interaction:
         sep = r0 - R_xy[:, None]
         rho = np.linalg.norm(r0 - R_xy[:, None], axis=2)
 
-        bloch = exp(-1j * np.dot(k_xy, R_xy.T))[:, None]
+        bloch = exp(-1j * np.dot(k_xy, R_xy.T))
 
         x = -sep[:, :, 0]/rho
         y = -sep[:, :, 1]/rho
+
+        # Reshape arrays and vectors to allow for vectorized calculation.
+        rho = rho[:, :, None]
+        bloch = bloch[:, None, None]
+        x = x[:, :, None]
+        y = y[:, :, None]
         
         F_plus = exp(1j * k0 * rho) * sp.special.erfc(1j * k0/(2 * eta) + rho * eta)
         F_minus = exp(-1j * k0 * rho) * sp.special.erfc(-1j * k0/(2 * eta) + rho * eta) 
         
-        f = F_plus + F_minus
+        fx = F_plus + F_minus
+
         df = -4 * eta / sqrt(pi) * exp(k0**2 / (4*eta**2) - rho**2 * eta**2) \
                     + 1j * k0 * (F_plus - F_minus)
         d2f = 8 * eta**3 * rho / sqrt(pi) * exp(k0**2 / (4*eta**2) - rho**2 * eta**2) \
-                    - k0**2 * f
+                    - k0**2 * fx
 
-        f1 = -f / rho**3 + df / rho**2
-        f2 = d2f / rho - 3 * df / rho**2 + 3 * f / rho**3
+        f1 = -fx / rho**3 + df / rho**2
+        f2 = d2f / rho - 3 * df / rho**2 + 3 * fx / rho**3
 
-        s0_spat  = 0.5 * f / rho * bloch
-        sxx_spat = 0.5 * (f1 + f2 * x **2) * bloch
+        s0_spat  = 0.5 * fx / rho * bloch
+        sxx_spat = 0.5 * (f1 + f2 * x**2) * bloch
         sxy_spat = 0.5 * (   + f2 * x * y) * bloch
         syy_spat = 0.5 * (f1 + f2 * y**2) * bloch
         szz_spat = 0.5 * (f1           ) * bloch
@@ -71,26 +71,27 @@ class Interaction:
                 sum_term[np.isnan(sum_term)] = 0
 
         S0_spat  = np.sum(s0_spat, axis=0)
-        Sxx_spat = S0_spat +   1/k0**2 * np.sum(sxx_spat, axis=0) 
-        Sxy_spat =             1/k0**2 * np.sum(sxy_spat, axis=0) 
-        Syy_spat = S0_spat +   1/k0**2 * np.sum(syy_spat, axis=0) 
-        Szz_spat = S0_spat +   1/k0**2 * np.sum(szz_spat, axis=0) 
+        Sxx_spat = S0_spat +   1 / k0**2 * np.sum(sxx_spat, axis=0) 
+        Sxy_spat =             1 / k0**2 * np.sum(sxy_spat, axis=0) 
+        Syy_spat = S0_spat +   1 / k0**2 * np.sum(syy_spat, axis=0) 
+        Szz_spat = S0_spat +   1 / k0**2 * np.sum(szz_spat, axis=0) 
 
+        # Regularize the origin sum.
         if np.linalg.norm(r0) == 0:
-            fp0   = -4*eta/sqrt(pi)*exp((k0/(2*eta))**2)-2*k0*(sp.special.erfc(0.5j*k0/eta).imag)
-            fppp0 = 8*eta**3/sqrt(pi)*exp((k0/(2*eta))**2) - k0**2 * fp0
-            S0_spat  = S0_spat + 0.5*(fp0-2j*k0)
-            Sxx_spat = Sxx_spat + 0.5*(fp0-2j*k0) + 0.5*1./3*(k0**-2*fppp0+2j*k0)
-            Syy_spat = Syy_spat + 0.5*(fp0-2j*k0) + 0.5*1./3*(k0**-2*fppp0+2j*k0)
-            Szz_spat = Szz_spat + 0.5*(fp0-2j*k0) + 0.5*1./3*(k0**-2*fppp0+2j*k0)
+            fp0   = -4 * eta / sqrt(pi) * exp((k0 / (2 * eta))**2)- 2 * k0 * (sp.special.erfc(0.5j * k0 / eta).imag)
+            fppp0 = 8 * eta**3 / sqrt(pi) * exp((k0 / (2 * eta))**2) - k0**2 * fp0
+            S0_spat  = S0_spat + 0.5 * (fp0 - 2j * k0)
+            Sxx_spat = Sxx_spat + 0.5 * (fp0 - 2j * k0) + 0.5 * 1./ 3 * (1 / k0**2 * fppp0 + 2j * k0)
+            Syy_spat = Syy_spat + 0.5 * (fp0 - 2j * k0) + 0.5 * 1./ 3 * (1 / k0**2 * fppp0 + 2j * k0)
+            Szz_spat = Szz_spat + 0.5 * (fp0 - 2j * k0) + 0.5 * 1./ 3 * (1 / k0**2 * fppp0 + 2j * k0)
 
-        spatial_sum = np.zeros((r0.shape[0], 3, 3), dtype=np.complex128)
-
-        spatial_sum[:, 0, 0] = Sxx_spat        
-        spatial_sum[:, 0, 1] = Sxy_spat
-        spatial_sum[:, 1, 1] = Syy_spat
-        spatial_sum[:, 1, 0] = Sxy_spat
-        spatial_sum[:, 2, 2] = Szz_spat        # origin_mult = 0
+        spatial_sum = np.zeros((r0.shape[0], 3, 3, len(k0)), dtype=complex)
+        
+        spatial_sum[:, 0, 0, :] = Sxx_spat        
+        spatial_sum[:, 0, 1, :] = Sxy_spat
+        spatial_sum[:, 1, 1, :] = Syy_spat
+        spatial_sum[:, 1, 0, :] = Sxy_spat
+        spatial_sum[:, 2, 2, :] = Szz_spat 
 
         return k0**2 * spatial_sum
 
@@ -115,40 +116,48 @@ class Interaction:
         betx = beta_xy[:, 0]
         bety = beta_xy[:, 1]
 
+        k0 = k0[:, None]
+
         test = (beta / k0 > 1)
-        kz = np.where(test, sqrt(beta**2 - k0**2), -1j*sqrt(k0**2 - beta**2))[:, None]
+        kz = np.where(test, 
+                sqrt(beta**2 - k0**2), 
+                -1j * sqrt(k0**2 - beta**2))
+
+        kz = kz[:, :, None]
+        betx = betx[:, None]
+        bety = bety[:, None]
 
         z = r0[:, 2]
 
-        F_plus = exp(kz * z) * sp.special.erfc(kz/(2 * eta) + z * eta)
-        F_minus = exp(-kz * z) * sp.special.erfc(kz/(2 * eta) - z * eta) 
+        F_plus = exp(kz * z) * sp.special.erfc(kz / (2 * eta) + z * eta)
+        F_minus = exp(-kz * z) * sp.special.erfc(kz / (2 * eta) - z * eta) 
         
         g = F_plus + F_minus
         d2g = kz**2 * g - kz * 4 * eta / sqrt(pi) * exp(-z**2 * eta**2 - kz**2 / (4 * eta**2))
         s0_spec = g/kz * bloch
 
-        sxx_spec = -(betx * betx)[:, None] * s0_spec
-        sxy_spec = -(betx * bety)[:, None] * s0_spec
-        syy_spec = -(bety * bety)[:, None] * s0_spec
+        sxx_spec = -(betx * betx) * s0_spec
+        sxy_spec = -(betx * bety) * s0_spec
+        syy_spec = -(bety * bety) * s0_spec
         szz_spec = d2g/kz * bloch
 
-        S0_spec  = pi/A*np.sum(s0_spec, axis=0) 
-        Sxx_spec = S0_spec + k0**-2 * pi/A * np.sum(sxx_spec, axis=0) 
-        Sxy_spec =           k0**-2 * pi/A * np.sum(sxy_spec, axis=0) 
-        Syy_spec = S0_spec + k0**-2 * pi/A * np.sum(syy_spec, axis=0) 
-        Szz_spec = S0_spec + k0**-2 * pi/A * np.sum(szz_spec, axis=0) 
-
-        spectral_sum = np.zeros((r0.shape[0], 3, 3), dtype=np.complex128)
-
-        spectral_sum[:, 0, 0] = Sxx_spec
-        spectral_sum[:, 0, 1] = Sxy_spec
+        S0_spec  = pi / A * np.sum(s0_spec, axis=1) 
+        Sxx_spec = S0_spec + 1 / k0**2 * pi / A * np.sum(sxx_spec, axis=1) 
+        Sxy_spec =           1 / k0**2 * pi / A * np.sum(sxy_spec, axis=1) 
+        Syy_spec = S0_spec + 1 / k0**2 * pi / A * np.sum(syy_spec, axis=1) 
+        Szz_spec = S0_spec + 1 / k0**2 * pi / A * np.sum(szz_spec, axis=1) 
         
-        spectral_sum[:, 1, 0] = Sxy_spec
-        spectral_sum[:, 1, 1] = Syy_spec
+        spectral_sum = np.zeros((r0.shape[0], 3, 3, len(k0)), dtype=complex)
 
-        spectral_sum[:, 2, 2] = Szz_spec
+        spectral_sum[:, 0, 0] = Sxx_spec.T
+        spectral_sum[:, 0, 1] = Sxy_spec.T
+        
+        spectral_sum[:, 1, 0] = Sxy_spec.T
+        spectral_sum[:, 1, 1] = Syy_spec.T
+
+        spectral_sum[:, 2, 2] = Szz_spec.T
           
-        return k0**2 * spectral_sum
+        return k0[:, 0]**2 * spectral_sum
 
     def interaction_matrix(self, f, k_xy):
         k0 = 2 * np.pi * f / sp.constants.c * sqrt(self.eps_m)
@@ -163,10 +172,10 @@ class Interaction:
             H = self.spatial_part(f, k_xy, origin, excl=True) + \
                     self.spectral_part(f, k_xy, origin, excl=True)
 
-            H = H.reshape(3, 3)
+            H = H.reshape(3, 3, len(k0))
 
         else:
-            H = np.zeros((N, N, 3, 3), dtype=np.complex128)
+            H = np.zeros((N, N, 3, 3, len(k0)), dtype=complex)
 
             combos = np.vstack(np.triu_indices(N, k=1)).T 
             combos_lower = np.array([combos[:, 1], combos[:, 0]]).T
@@ -185,113 +194,108 @@ class Interaction:
             g_excl = self.spatial_part(f, k_xy, origin, excl=True) + \
                     self.spectral_part(f, k_xy, origin, excl=True)
             
-            H = H.transpose(0, 2, 1, 3).reshape(3*H.shape[0], 3*H.shape[0])
-            g_excl = g_excl.reshape(3, 3)
+            H = H.transpose(0, 2, 1, 3, 4).reshape(3*H.shape[0], 3*H.shape[0], len(k0))
 
-            diag =  np.kron(np.eye(N, dtype=int), g_excl)
+            g_excl = g_excl.reshape(3, 3, len(k0))
+
+            identity = np.eye(N, dtype=int).reshape(N, N, 1)
+            diag = np.kron(identity, g_excl)
 
             H += diag
 
         return H
 
-    def sf_mp(self, f, k_xy):
-        k0 = 2 * np.pi * f / sp.constants.c * sqrt(self.eps_m)
-        N = self.lattice.size
+    def sf_mp(self, k_xy, f_range):
+        H = self.interaction_matrix(f_range, k_xy)
 
-        lda = sp.constants.c/f
+        k0 = 2 * np.pi * f_range / sp.constants.c * sqrt(self.eps_m)
+        N = self.lattice.size
         
-        a_xy, a_z = self.element.polarisability(f)
+        a_xy, a_z = self.element.polarisability(f_range)
         
         N_range = np.arange(3 * N)
+        z_components = N_range[2::3]  # (0, 0, z).. (0, 0, z)..
+        xy_components = np.delete(N_range, z_components)  # (x, y, 0).. (x, y, 0)..
 
-        z_components = N_range[2::3]
-        xy_components = np.delete(N_range, z_components)
-        
-        interaction_matrix = -self.interaction_matrix(f, k_xy)
+        interaction_matrix = -H
         interaction_matrix[z_components, z_components] += 1/a_z
         interaction_matrix[xy_components, xy_components] += 1/a_xy
 
-        eigs = sp.linalg.eigvals(interaction_matrix)
-        ext = k0 * np.sum((1/eigs)).imag
-
+        ext = np.empty(len(f_range))
+        for i in range(len(f_range)):
+            eigs = sp.linalg.eigvals(interaction_matrix[:, :, i])
+            ext[i] = np.sum((1/eigs)).imag
         return ext
 
-    def spectral_function(self, f_start, f_stop, size=20, filename=None):
-        kxy_range = self.lattice.get_brillouin_zone(size)
-        N = self.lattice.size
-
-        f_range = np.linspace(f_start, f_stop, size)
-
-        attr = it.product(f_range, kxy_range) 
-
-        print('calculating spectral function...')
-        start_time = time.time()
-
-        p = Pool() 
-        result = p.starmap(self.sf_mp, attr)
+    def spectral_function(self, f_range) -> np.array:
+        k_xy = self.lattice.get_brillouin_zone(len(f_range))
+        test = it.product(k_xy, [f_range])
+        
+        t_start = time.time()
+        p = Pool()
+        result = p.starmap(self.sf_mp, test)
         p.close()
+        print(f'spectral function: t = {time.time() - t_start}s')
 
-        end_time = time.time()
-
-        print('done in {:.02f}s'.format(end_time - start_time))
-        print('{:.06f}s per pixel'.format((end_time - start_time)/size**2))
-        # np.save(filename, result)
-
-        return np.array(result)
-
+        return np.array(result).T
+        
 class OutPlane(Interaction):
     def __init__(self, lattice, element):
         super().__init__(lattice, element)
 
-    def sf_mp(self, f, k_xy):
-        k0 = 2 * np.pi * f / sp.constants.c * sqrt(self.eps_m)
-        N = self.lattice.size
+    def sf_mp(self, k_xy, f_range):
+        H = self.interaction_matrix(f_range, k_xy)
 
-        lda = sp.constants.c/f
+        k0 = 2 * np.pi * f_range / sp.constants.c * sqrt(self.eps_m)
+        N = self.lattice.size
         
-        a_xy, a_z = self.element.polarisability(f)
+        a_xy, a_z = self.element.polarisability(f_range)
         
         N_range = np.arange(3 * N)
+        z_components = N_range[2::3]  # (0, 0, z).. (0, 0, z)..
+        xy_components = np.delete(N_range, z_components)  # (x, y, 0).. (x, y, 0)..
 
-        z_components = N_range[2::3]
-        xy_components = np.delete(N_range, z_components)
-        
-        interaction_matrix = -self.interaction_matrix(f, k_xy)
+        interaction_matrix = -H
         interaction_matrix[z_components, z_components] += 1/a_z
+        interaction_matrix[xy_components, xy_components] += 1/a_xy
 
         H_z = interaction_matrix[z_components, :][:, z_components]
 
-        eigs = sp.linalg.eigvals(H_z)
-        ext = k0 * np.sum((1/eigs)).imag
+        ext = np.empty(len(f_range))
+        for i in range(len(f_range)):
+            eigs = sp.linalg.eigvals(H_z[:, :, i])
+            ext[i] = np.sum((1/eigs)).imag
+        return ext        
 
-        return ext
 
 class InPlane(Interaction):
     def __init__(self, lattice, element):
         super().__init__(lattice, element)
 
-    def sf_mp(self, f, k_xy):
-        k0 = 2 * np.pi * f / sp.constants.c * sqrt(self.eps_m)
-        N = self.lattice.size
+    def sf_mp(self, k_xy, f_range):
+        H = self.interaction_matrix(f_range, k_xy)
 
-        lda = sp.constants.c/f
-  
-        a_xy, a_z = self.element.polarisability(f)
+        k0 = 2 * np.pi * f_range / sp.constants.c * sqrt(self.eps_m)
+        N = self.lattice.size
+        
+        a_xy, a_z = self.element.polarisability(f_range)
         
         N_range = np.arange(3 * N)
+        z_components = N_range[2::3]  # (0, 0, z).. (0, 0, z)..
+        xy_components = np.delete(N_range, z_components)  # (x, y, 0).. (x, y, 0)..
 
-        z_components = N_range[2::3]
-        xy_components = np.delete(N_range, z_components)
-        
-        interaction_matrix = -self.interaction_matrix(f, k_xy)
+        interaction_matrix = -H
+        interaction_matrix[z_components, z_components] += 1/a_z
         interaction_matrix[xy_components, xy_components] += 1/a_xy
 
         H_xy = interaction_matrix[xy_components, :][:, xy_components]
 
-        eigs = sp.linalg.eigvals(H_xy)
-        ext = k0 * np.sum((1/eigs)).imag
+        ext = np.empty(len(f_range))
+        for i in range(len(f_range)):
+            eigs = sp.linalg.eigvals(H_xy[:, :, i])
+            ext[i] = np.sum((1/eigs)).imag
 
-        return ext
+        return ext       
 
 class LayerInteraction(Interaction):
     def __init__(self, lattice, element, eps_m, e2 = 1, ex = None, d = 45E-9, dx = 10E-9, element2 = None):
@@ -520,4 +524,5 @@ class LayerInteraction(Interaction):
             H += diag
 
         return H
+
 

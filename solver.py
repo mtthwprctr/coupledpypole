@@ -225,7 +225,7 @@ class Interaction:
         for i in range(len(f_range)):
             eigs = sp.linalg.eigvals(interaction_matrix[:, :, i])
             ext[i] = np.sum((1/eigs)).imag
-        return ext
+        return k0 * ext
 
     def spectral_function(self, f_range) -> np.array:
         k_xy = self.lattice.get_brillouin_zone(len(f_range))
@@ -235,13 +235,34 @@ class Interaction:
         p = Pool()
         result = p.starmap(self.sf_mp, test)
         p.close()
-        print(f'spectral function: t = {time.time() - t_start}s')
+        print(f'spectral function: t = {time.time() - t_start:.2f}s')
 
         return np.array(result).T
         
 class OutPlane(Interaction):
     def __init__(self, lattice, element):
         super().__init__(lattice, element)
+
+    def test(self, f_range, k_xy, ):
+        H = self.interaction_matrix(f_range, k_xy)
+
+        k0 = 2 * np.pi * f_range / sp.constants.c * sqrt(self.eps_m)
+        N = self.lattice.size
+
+        a_xy, a_z = self.element.polarisability(f_range)
+
+        N_range = np.arange(3 * N)
+        z_components = N_range[2::3]  # (0, 0, z).. (0, 0, z)..
+
+        interaction_matrix = -H
+        interaction_matrix[z_components, z_components] += 1/a_z
+        H_z = interaction_matrix[z_components, :][:, z_components]
+
+
+        dets = np.array([np.linalg.det(H_z[:, :, i]) for i in np.arange(len(f_range))])
+        # print(dets)
+        return np.abs(dets)
+
 
     def sf_mp(self, k_xy, f_range):
         H = self.interaction_matrix(f_range, k_xy)
@@ -526,3 +547,25 @@ class LayerInteraction(Interaction):
         return H
 
 
+import lattices, particles
+
+honeycomb = lattices.Honeycomb(lattice_constant = 20E-9 * np.sqrt(3))
+sphere = particles.Particle(radius = 5E-9, height = 10E-9)
+
+if __name__ == '__main__':
+    n_modes = 6
+    grid = 64
+    f_min, f_max = 2.6*EV, 3.2*EV
+    f_range = np.linspace(f_min, f_max, n_modes)
+
+    all_roots = np.zeros((grid, n_modes))
+    for index, k_xy in enumerate(honeycomb.get_brillouin_zone(grid)):
+        system = OutPlane(honeycomb, sphere)
+        fn = system.test
+        roots = sp.optimize.root(fn, f_range, k_xy)
+        all_roots[index, :] = roots.x
+
+    from matplotlib import pyplot as plt
+    plt.plot(all_roots, lw=0, marker='.')
+    plt.show()
+    # np.save("honeycomb_spfn", honeycomb_spfn)

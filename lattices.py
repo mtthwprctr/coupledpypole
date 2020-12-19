@@ -2,10 +2,7 @@ import numpy as np
 from numpy import sqrt, pi, cos, sin
 from numpy.linalg import norm
 
-def rot(angle):
-    return np.array([[np.cos(angle), -np.sin(angle), 0],
-                    [np.sin(angle), np.cos(angle), 0],
-                    [0, 0, 1]])
+from utils import rot
 
 class Lattice:
     def __init__(self, a1 : np.array, a2 : np.array):
@@ -33,6 +30,7 @@ class Lattice:
 class Triangular(Lattice):
     def __init__(self, lattice_constant:float):
         self.a0 = lattice_constant
+        self.R0 = lattice_constant
 
         self.a1 = np.array([1.5 / sqrt(3), 0.5, 0]) * self.a0 
         self.a2 = np.array([1.5 / sqrt(3), -0.5, 0]) * self.a0
@@ -84,7 +82,7 @@ class Kagome(Triangular):
     def __init__(self, lattice_constant:float, scale:float = 0, rotation:float = 0):
         super().__init__(lattice_constant)
 
-        self.R0 = lattice_constant / (2 * sqrt(3))
+        self.R0 = lattice_constant / 2
         self.s = scale
         self.rot = rotation
 
@@ -92,7 +90,7 @@ class Kagome(Triangular):
         return f'Kagome lattice: a0 = {self.a0/1E-9} nm, R0 = {self.a0/1E-9/2} nm'
 
     def unit_cell(self) -> np.array:
-        r = self.R0 * (1 + self.s)
+        r = self.R0/sqrt(3) * (1 + self.s)
         
         angles = np.array([0, 2*pi/3, 4*pi/3]) + self.rot
         x = r * cos(angles)
@@ -115,7 +113,7 @@ class BreathingHoneycomb(Triangular):
         return f'Breathing honeycomb lattice: a0 = {self.a0/1E-9:.2f} nm, R0 = {self.R0/1E-9:.2f} nm'
 
     def unit_cell(self) -> np.array:
-        r = self.R0 * self.s
+        r = self.R0 * (1 + self.s)
         
         angles = np.arange(0, 2*np.pi, np.pi/3) + np.pi/6 + self.rot
         
@@ -137,14 +135,15 @@ class Honeycomb(Triangular):
         return f'Breathing honeycomb lattice: a0 = {self.a0/1E-9:.2f} nm, R0 = {self.R0/1E-9:.2f} nm'
 
     def unit_cell(self) -> np.array:
-        positions = np.array([np.array([0, 0, 0]), np.array([self.R0, 0, 0])])
+        positions = np.array([np.array([-self.R0/2, 0, 0]), np.array([self.R0/2, 0, 0])])
     
         return positions
 
 class Square(Lattice):
     def __init__(self, lattice_constant:float):
         self.a0 = lattice_constant
-
+        self.R0 = lattice_constant
+        
         self.a1 = np.array([1, 0, 0]) * self.a0
         self.a2 = np.array([0, 1, 0]) * self.a0
 
